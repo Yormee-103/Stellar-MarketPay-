@@ -1,5 +1,4 @@
 
-Server · JS
 /* global userAddress, userLastSeen, userClients, setWebsocketConnections, broadcastToUser, createServiceLogger, sendEmail, logError, startEscrowTimeoutChecker, refreshWsMetrics, startNotificationProcessor, startAdminReportScheduler, startWeeklyDigestScheduler, startPurgeDeletedRecords, startRecurringEscrowTicker */
 /* eslint-disable */
 /**
@@ -56,6 +55,31 @@ const anchorRoutes        = require("./routes/anchors");
 const scopeRoutes        = require("./routes/scope");
 const analyticsRoutes    = require("./routes/analytics");
 const searchRoutes       = require("./routes/search");
+const adminRoutes        = require("./routes/admin");
+const admin2faRoutes     = require("./routes/admin2fa");
+const assessmentRoutes   = require("./routes/assessments");
+const auditRoutes        = require("./routes/audit");
+const categoryRoutes     = require("./routes/categories");
+const certificateRoutes  = require("./routes/certificates");
+const developerRoutes    = require("./routes/developer");
+const disputeRoutes      = require("./routes/disputes");
+const faucetRoutes       = require("./routes/faucet");
+const insightRoutes      = require("./routes/insights");
+const jobTemplateRoutes  = require("./routes/jobTemplates");
+const messageRoutes      = require("./routes/messageRoutes");
+const notificationRoutes = require("./routes/notifications");
+const onboardingRoutes   = require("./routes/onboarding");
+const pingRoutes         = require("./routes/ping");
+const publicRoutes       = require("./routes/public");
+const publicJobBoardRoutes = require("./routes/publicJobBoard");
+const rateLimitRoutes    = require("./routes/rateLimit");
+const savedSearchRoutes  = require("./routes/savedSearches");
+const skillRoutes        = require("./routes/skills");
+const sponsorshipRoutes  = require("./routes/sponsorship");
+const timeEntryRoutes    = require("./routes/timeEntries");
+const tokenRoutes        = require("./routes/tokens");
+const webauthnRoutes     = require("./routes/webauthn");
+const webhookRoutes      = require("./routes/webhooks");
  
 const { setWebsocketConnections } = require("./metrics");
 const { startEscrowTimeoutChecker } = require("./services/escrowService");
@@ -117,6 +141,20 @@ function broadcastRealtime(event, payload) {
   }
 }
  
+function broadcastToRoom(room, event, payload, timestamp) {
+  const clients = realtimeRooms.get(room);
+  if (!clients) return;
+  const message = JSON.stringify({
+    event,
+    payload,
+    room,
+    timestamp: timestamp || Date.now(),
+  });
+  for (const ws of clients) {
+    if (ws.readyState === WS_OPEN) ws.send(message);
+  }
+}
+
 function broadcastToUser(userAddress, event, payload) {
   const message = JSON.stringify({ event, payload });
   for (const ws of userClients.get(userAddress) || []) {
@@ -159,7 +197,7 @@ const priceAlertService = new PriceAlertService({
   sendEmail: async ({ to, subject, text }) => {
     if (!smtpTransport || !to) return;
     await smtpTransport.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      from: process.env.SMTP_FROM || process.env.EMAIL_FROM || process.env.SMTP_USER,
       to,
       subject,
       text,
@@ -224,6 +262,32 @@ app.use("/api/talent-pools",      talentPoolRoutes);
 app.use("/api/invitations",       rateLimit({ windowMs: 60_000, max: 20 }), invitationRoutes);
 app.use("/api/analytics",         analyticsRoutes);
 app.use("/api/search",            searchRoutes);
+app.use("/ping",                  pingRoutes);
+app.use("/api/ping",              pingRoutes);
+app.use("/api/admin/2fa",         admin2faRoutes);
+app.use("/api/admin",             adminRoutes);
+app.use("/api/assessments",       assessmentRoutes);
+app.use("/api/audit",             auditRoutes);
+app.use("/api/categories",        categoryRoutes);
+app.use("/api/certificates",      certificateRoutes);
+app.use("/api/developer",         developerRoutes);
+app.use("/api/disputes",          disputeRoutes);
+app.use("/api/faucet",            faucetRoutes);
+app.use("/api/insights",          insightRoutes);
+app.use("/api/job-templates",     jobTemplateRoutes);
+app.use("/api/messages",          messageRoutes);
+app.use("/api/notifications",     notificationRoutes);
+app.use("/api/onboarding",        onboardingRoutes);
+app.use("/api/public",            publicRoutes);
+app.use("/api/v1/public",         publicJobBoardRoutes);
+app.use("/api/rate-limit",        rateLimitRoutes);
+app.use("/api/saved-searches",    savedSearchRoutes);
+app.use("/api/skills",            skillRoutes);
+app.use("/api/sponsorship",       sponsorshipRoutes);
+app.use("/api/time-entries",      timeEntryRoutes);
+app.use("/api/tokens",            tokenRoutes);
+app.use("/api/webauthn",          webauthnRoutes);
+app.use("/api/webhooks",          webhookRoutes);
  
 // 404 handler — must come after all routes
 app.use((req, res) => {
@@ -298,22 +362,62 @@ wsServer.on("connection", async (ws, request) => {
  
     ws.on("message", (raw) => {
       try {
-        const message = JSON.parse(String(raw));
-        if (message?.type === "subscribe" && Array.isArray(message.rooms)) {
-          message.rooms.forEach((roomId) => subscribeRealtime(ws, roomId));
-          sendJson(ws, "subscribed", { rooms: [...ws.realtimeRooms] });
-        }
-        if (message?.type === "unsubscribe" && Array.isArray(message.rooms)) {
-          for (const roomId of message.rooms) {
-            if (typeof roomId !== "string") continue;
-            ws.realtimeRooms.delete(roomId);
-            const room = realtimeRooms.get(roomId);
-            room?.delete(ws);
-            if (room && room.size === 0) realtimeRooms.delete(roomId);
+        const msg = JSON.parse(String(raw));
+        if (!msg || typeof msg !== "object") return;
+
+        const type = msg.type || msg.event || msg.action;
+
+        if (type === "subscribe") {
+          if (Array.isArray(msg.rooms)) {
+            msg.rooms.forEach((roomId) => subscribeRealtime(ws, roomId));
+            sendJson(ws, "subscribed", { rooms: [...ws.realtimeRooms] });
+            return;
           }
-          sendJson(ws, "subscribed", { rooms: [...ws.realtimeRooms] });
+          if (msg.room) {
+            subscribeRealtime(ws, String(msg.room));
+            sendJson(ws, "subscribed", { room: msg.room });
+            return;
+          }
         }
-      } catch { /* ignore malformed subscription messages */ }
+
+        if (type === "unsubscribe") {
+          if (Array.isArray(msg.rooms)) {
+            for (const roomId of msg.rooms) {
+              if (typeof roomId !== "string") continue;
+              ws.realtimeRooms.delete(roomId);
+              const room = realtimeRooms.get(roomId);
+              room?.delete(ws);
+              if (room && room.size === 0) realtimeRooms.delete(roomId);
+            }
+            sendJson(ws, "subscribed", { rooms: [...ws.realtimeRooms] });
+            return;
+          }
+          if (msg.room) {
+            const room = String(msg.room);
+            ws.realtimeRooms.delete(room);
+            const roomSockets = realtimeRooms.get(room);
+            roomSockets?.delete(ws);
+            if (roomSockets && roomSockets.size === 0) realtimeRooms.delete(room);
+            sendJson(ws, "unsubscribed", { room });
+            return;
+          }
+        }
+
+        if (type === "ping") {
+          sendJson(ws, "pong", {
+            timestamp: msg.timestamp || Date.now(),
+            serverTime: Date.now(),
+          });
+          return;
+        }
+
+        if (type === "broadcast" && msg.room) {
+          broadcastToRoom(msg.room, msg.event || "message", msg.payload || msg.data, msg.timestamp);
+          return;
+        }
+      } catch {
+        /* ignore invalid JSON */
+      }
     });
  
     // Replay notifications missed while the user was disconnected
@@ -778,6 +882,8 @@ app._ws.userLastSeen = userLastSeen;
 app._ws.scopeSessionClients = scopeSessionClients;
 app._ws.broadcastRealtime = broadcastRealtime;
 app._ws.broadcastToUser = (userAddress, event, payload) => broadcastRealtime(event, { ...payload, userAddress });
+app._ws.broadcastToRoom = broadcastToRoom;
+app.locals.broadcastToRoom = broadcastToRoom;
  
 app.startEscrowTimeoutChecker = () => {};
  

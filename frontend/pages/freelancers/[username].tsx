@@ -25,31 +25,16 @@ import ReputationBadge from "@/components/ReputationBadge";
 import FreelancerProfileSkeleton from "@/components/FreelancerProfileSkeleton";
 import PortfolioVerificationBadge from "@/components/PortfolioVerificationBadge";
 import {
-  fetchPublicProfile,
-  fetchProfileStats,
-  fetchProfileResponseTime,
-  verifyIdentity,
-  fetchSkillEndorsements,
-  endorseSkill,
-  fetchSkillBadges,
-  fetchResponseTime,
-  fetchUserCertificates,
-  fetchRatings,
-  fetchFreelancerEarnings,
-  type CertificateData,
-  type EarningPayment,
-} from "@/lib/api";
-import StateMessage from "@/components/StateMessage";
-import { useToast } from "@/components/Toast";
-import { useApi } from "@/hooks/useApi";
-import {
   endorseSkill,
   fetchEscrow,
   fetchFreelancerEarnings,
   fetchFreelancerNftCertificates,
+  fetchProfileResponseTime,
   fetchProfiles,
+  fetchProfileStats,
   fetchPublicProfile,
   fetchRatings,
+  fetchResponseTime,
   fetchSkillBadges,
   fetchSkillEndorsements,
   fetchUserCertificates,
@@ -58,6 +43,9 @@ import {
   type EarningPayment,
   type NftCertificateData,
 } from "@/lib/api";
+import StateMessage from "@/components/StateMessage";
+import { useToast } from "@/components/Toast";
+import { useApi } from "@/hooks/useApi";
 import { accountUrl, explorerUrl, isValidStellarAddress } from "@/lib/stellar";
 import {
   availabilityBadgeClass,
@@ -177,7 +165,9 @@ function getPortfolioTypeLabel(item: PortfolioItem) {
   }
 }
 
-function getVerificationBadge(item: PortfolioItem): { tone: "verified" | "failed" | "pending"; label: string } | null {
+function getVerificationBadge(
+  item: PortfolioItem,
+): { tone: "verified" | "failed" | "pending"; label: string } | null {
   // Only verifiable link types surface a badge.
   if (item.type !== "github" && item.type !== "live") return null;
 
@@ -210,7 +200,6 @@ function truncateError(err: string): string {
   if (trimmed.length <= 24) return trimmed;
   return `${trimmed.slice(0, 22)}\u2026`;
 }
-
 
 export default function PublicDeveloperPortfolioPage({
   publicKey,
@@ -781,7 +770,9 @@ export default function PublicDeveloperPortfolioPage({
                           <p className="text-xs uppercase tracking-[0.18em] text-market-300/80">
                             {getPortfolioTypeLabel(item)}
                           </p>
-                          {badge && <PortfolioVerificationBadge badge={badge} />}
+                          {badge && (
+                            <PortfolioVerificationBadge badge={badge} />
+                          )}
                         </div>
                         <h3 className="text-amber-100 font-medium text-base break-words mb-2">
                           {item.title}
